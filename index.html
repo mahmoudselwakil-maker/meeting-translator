@@ -27,13 +27,14 @@
   .sm { padding:10px 14px; border:0; border-radius:10px; background: var(--accent); color:#fff; font-size:15px; }
   .sm:disabled { opacity:.5; }
   .sm.grey { background: var(--muted); }
-  textarea { width:100%; padding:12px; border-radius:12px; border:1px solid #bbb; font-size:17px; background: var(--card); color: var(--text); font-family: inherit; }
+  textarea, select { width:100%; padding:12px; border-radius:12px; border:1px solid #bbb; font-size:16px; background: var(--card); color: var(--text); font-family: inherit; }
   .row { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; align-items:center; }
+  .opt { display:flex; align-items:center; gap:10px; font-size:17px; }
+  .opt input { width:22px; height:22px; }
   .hidden { display:none; }
   .status { font-size:14px; color: var(--muted); text-align:center; margin:10px 0; min-height:20px; }
   .ltr { direction:ltr; text-align:left; }
   .err { color: var(--danger); }
-  .size { font-size: 16px; line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -71,22 +72,28 @@
     <div class="status" id="speakStatus"></div>
 
     <div class="card">
-      <div class="label">اللي قلته بالعربي (تقدر تعدّله)</div>
-      <textarea id="arInput" rows="3" placeholder="اتكلم أو اكتب هنا"></textarea>
+      <div class="label">اللي قلته بالعربي</div>
+      <div class="big" id="arLog"></div>
+      <textarea id="arInput" rows="2" placeholder="أو اكتب هنا واضغط ترجم"></textarea>
       <div class="row">
-        <button class="sm" id="sendAr">ترجم وقول</button>
+        <button class="sm" id="sendAr">ترجم المكتوب</button>
+        <button class="sm grey" id="clearSpeak">مسح</button>
       </div>
     </div>
 
     <div class="card">
-      <div class="label">الجملة الإنجليزي (بتتقال بصوت عالي)</div>
+      <div class="label">الإنجليزي</div>
       <div class="big ltr" id="outEn"></div>
       <div class="row">
         <button class="sm" id="playEn">🔊 قولها تاني</button>
         <button class="sm grey" id="copyEn">نسخ</button>
       </div>
-      <div class="label" style="margin-top:12px">معناها بالعربي</div>
-      <div id="outAr" class="size"></div>
+    </div>
+
+    <div class="card">
+      <label class="opt"><input type="checkbox" id="ttsOn" checked> 🔊 اقرا الإنجليزي بصوت عالي</label>
+      <div class="label" style="margin-top:12px">صوت الإنجليزي</div>
+      <select id="voiceSel"></select>
     </div>
   </section>
 </main>
@@ -106,35 +113,76 @@
   $('tabListen').onclick = () => show('listen');
   $('tabSpeak').onclick = () => show('speak');
 
-  // ===== الكلام (Text to Speech) =====
-  function pickVoice(lang) {
-    const vs = speechSynthesis.getVoices();
-    const want = lang.toLowerCase();
-    return vs.find(v => v.lang.replace('_', '-').toLowerCase() === want)
-        || vs.find(v => v.lang.toLowerCase().startsWith(want.slice(0, 2)));
-  }
+  // ===== تخزين بسيط على الموبايل (لو متاح) =====
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+  };
 
-  function speak(text, lang) {
+  // ===== الكلام (Text to Speech) =====
+  function speakAr(text) {
     if (!('speechSynthesis' in window) || !text) return;
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = lang;
+    u.lang = 'ar-EG';
     u.volume = 1;
     u.rate = 0.95;
-    const v = pickVoice(lang);
-    if (v) u.voice = v;
     speechSynthesis.speak(u);
   }
 
+  // الإنجليزي: بيتقال من غير ما يقطع اللي قبله، وبالصوت المختار
+  function speakEn(text, cancelFirst) {
+    if (!('speechSynthesis' in window) || !text) return;
+    if (cancelFirst) speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.volume = 1;
+    u.rate = 0.95;
+    const name = $('voiceSel').value;
+    const v = speechSynthesis.getVoices().find(x => x.name === name);
+    if (v) { u.voice = v; u.lang = v.lang; } else { u.lang = 'en-US'; }
+    speechSynthesis.speak(u);
+  }
+
+  // ===== اختيار صوت الإنجليزي (ذكوري كاختيار افتراضي) =====
+  const MALE_HINT = /male|david|mark|daniel|james|guy|tom|george|fred|alex/i;
+  function fillVoices() {
+    if (!('speechSynthesis' in window)) return;
+    const vs = speechSynthesis.getVoices().filter(v => /^en/i.test(v.lang));
+    if (!vs.length) return;
+    const sel = $('voiceSel');
+    const saved = store.get('enVoice');
+    sel.innerHTML = '';
+    vs.forEach(v => {
+      const o = document.createElement('option');
+      o.value = v.name;
+      o.textContent = v.name + ' (' + v.lang + ')';
+      sel.appendChild(o);
+    });
+    const pick = vs.find(v => v.name === saved)
+      || vs.find(v => MALE_HINT.test(v.name))
+      || vs[0];
+    sel.value = pick.name;
+  }
+  $('voiceSel').onchange = () => store.set('enVoice', $('voiceSel').value);
+  if ('speechSynthesis' in window) {
+    fillVoices();
+    speechSynthesis.onvoiceschanged = fillVoices;
+  }
+
+  // خيار تشغيل الصوت (محفوظ)
+  $('ttsOn').checked = store.get('ttsOn') !== '0';
+  $('ttsOn').onchange = () => store.set('ttsOn', $('ttsOn').checked ? '1' : '0');
+
   // ===== التعرف على الصوت (Speech to Text) =====
-  function makeRec(lang, continuous, onInterim, onFinal, onEnd) {
+  // وضع الاستماع: جملة وحدة لكل ضغطة
+  function makeRec(lang, onInterim, onFinal, onEnd) {
     if (!SR) {
       alert('المتصفح ده مش بيدعم التعرف على الصوت. افتح الصفحة من Chrome على Android.');
       return null;
     }
     const r = new SR();
     r.lang = lang;
-    r.continuous = continuous;
+    r.continuous = true;
     r.interimResults = true;
     r.maxAlternatives = 1;
     r.onresult = (e) => {
@@ -198,7 +246,7 @@
 
   $('listenBtn').onclick = () => {
     if (listening) { listenRec && listenRec.stop(); return; }
-    listenRec = makeRec('en-US', true,
+    listenRec = makeRec('en-US',
       (interim) => { $('listenStatus').textContent = interim; },
       async (finalText) => {
         enBuf = (enBuf + ' ' + finalText).trim();
@@ -221,75 +269,114 @@
     listenRec.start();
   };
 
-  $('speakAr').onclick = () => speak(arBuf, 'ar-EG');
+  $('speakAr').onclick = () => speakAr(arBuf);
   $('clearListen').onclick = () => {
     enBuf = ''; arBuf = '';
     $('enText').textContent = ''; $('arText').textContent = '';
   };
 
-  // ===== وضع الكلام: عربي ← إنجليزي =====
+  // ===== وضع الكلام: عربي ← إنجليزي (مستمر) =====
+  let speakActive = false;
   let speakRec = null;
-  let speaking = false;
-  let lastEn = '';
+  let speakChain = Promise.resolve();   // الترجمات بتتنفذ بالترتيب
+  let enAll = '';
+  let lastEnChunk = '';
 
   function setSpeakUI(on) {
-    speaking = on;
+    speakActive = on;
     $('speakBtn').textContent = on ? '⏹ وقف' : '🎤 اضغط واتكلم (عربي)';
     $('speakBtn').classList.toggle('rec', on);
     if (!on) $('speakStatus').textContent = '';
   }
 
-  async function doTranslate() {
-    const text = $('arInput').value.trim();
-    if (!text) return;
-    $('sendAr').disabled = true;
-    $('speakStatus').textContent = 'بترجم...';
-    $('speakStatus').classList.remove('err');
-    try {
-      lastEn = await translate(text, 'ar', 'en');
-      $('outEn').textContent = lastEn;
-      $('outAr').textContent = '';
-      speak(lastEn, 'en-US');   // يتقال بصوت عالي من السماعة
-      $('speakStatus').textContent = '';
-      // معنى الجملة بالعربي عشان تتأكد إنها اللي قصدته
-      try { $('outAr').textContent = await translate(lastEn, 'en', 'ar'); } catch (e) {}
-    } catch (e) {
-      $('speakStatus').textContent = 'حصل خطأ، جرّب تاني';
-      $('speakStatus').classList.add('err');
-    } finally {
-      $('sendAr').disabled = false;
+  // بيترجم كل جزء بعد ما تسكت، من غير ما يستنى الجملة كلها
+  function queueChunk(ar) {
+    $('arLog').textContent = ($('arLog').textContent + ' ' + ar).trim();
+    speakChain = speakChain.then(async () => {
+      try {
+        const en = await translate(ar, 'ar', 'en');
+        lastEnChunk = en;
+        enAll = (enAll + ' ' + en).trim();
+        $('outEn').textContent = enAll;
+        $('speakStatus').classList.remove('err');
+        if ($('ttsOn').checked) speakEn(en, false);
+      } catch (e) {
+        $('speakStatus').textContent = 'حصل خطأ في الترجمة، جرّب تاني';
+        $('speakStatus').classList.add('err');
+      }
+    });
+  }
+
+  function startSpeakRec() {
+    if (!SR) {
+      alert('المتصفح ده مش بيدعم التعرف على الصوت. افتح الصفحة من Chrome على Android.');
+      setSpeakUI(false);
+      return;
     }
+    const r = new SR();
+    r.lang = 'ar-EG';
+    r.continuous = true;
+    r.interimResults = true;
+    r.maxAlternatives = 1;
+    r.onresult = (e) => {
+      // لو الصوت الإنجليزي شغال، منسمعش عشان ما يترجمش نفسه
+      if ('speechSynthesis' in window && speechSynthesis.speaking) return;
+      let interim = '', final = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) final += t; else interim += t;
+      }
+      if (interim) $('speakStatus').textContent = interim.trim();
+      if (final.trim()) {
+        $('speakStatus').textContent = '';
+        queueChunk(final.trim());
+      }
+    };
+    r.onerror = (e) => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        setSpeakUI(false);
+        $('speakStatus').textContent = 'الميكروفون مش متسمح به';
+        $('speakStatus').classList.add('err');
+      }
+    };
+    r.onend = () => {
+      // Chrome بيقفل التعرف بعد فترة سكوت، فبنفتحه تاني لو الوضع لسه شغال
+      if (!speakActive) return;
+      setTimeout(() => { if (speakActive) { try { r.start(); } catch (e) {} } }, 250);
+    };
+    speakRec = r;
+    try { r.start(); } catch (e) { setSpeakUI(false); }
   }
 
   $('speakBtn').onclick = () => {
-    if (speaking) { speakRec && speakRec.stop(); return; }
-    // جملة واحدة لكل ضغطة، والتعرف يقف لوحده لما تسكت
-    speakRec = makeRec('ar-EG', false,
-      (interim) => { $('speakStatus').textContent = interim; },
-      (finalText) => {
-        $('arInput').value = finalText;
-        setSpeakUI(false);
-        doTranslate();
-      },
-      (err) => {
-        setSpeakUI(false);
-        if (err && err !== 'aborted' && err !== 'no-speech') {
-          $('speakStatus').textContent = 'مشكلة في الميكروفون: ' + err;
-          $('speakStatus').classList.add('err');
-        }
-      }
-    );
-    if (!speakRec) return;
+    if (speakActive) {
+      setSpeakUI(false);
+      if (speakRec) speakRec.stop();
+      return;
+    }
     setSpeakUI(true);
-    speakRec.start();
+    startSpeakRec();
   };
 
-  $('sendAr').onclick = doTranslate;
-  $('playEn').onclick = () => speak(lastEn, 'en-US');
+  $('sendAr').onclick = () => {
+    const text = $('arInput').value.trim();
+    if (!text) return;
+    $('arInput').value = '';
+    queueChunk(text);
+  };
+
+  $('clearSpeak').onclick = () => {
+    enAll = ''; lastEnChunk = '';
+    $('outEn').textContent = '';
+    $('arLog').textContent = '';
+  };
+
+  $('playEn').onclick = () => speakEn(enAll, true);
+
   $('copyEn').onclick = async () => {
-    if (!lastEn) return;
+    if (!enAll) return;
     try {
-      await navigator.clipboard.writeText(lastEn);
+      await navigator.clipboard.writeText(enAll);
       $('copyEn').textContent = 'اتنسخ ✓';
       setTimeout(() => { $('copyEn').textContent = 'نسخ'; }, 1500);
     } catch (e) {
