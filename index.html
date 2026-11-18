@@ -35,6 +35,7 @@
   .status { font-size:14px; color: var(--muted); text-align:center; margin:10px 0; min-height:20px; }
   .ltr { direction:ltr; text-align:left; }
   .err { color: var(--danger); }
+  .size { font-size: 16px; line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -88,6 +89,8 @@
         <button class="sm" id="playEn">🔊 قولها تاني</button>
         <button class="sm grey" id="copyEn">نسخ</button>
       </div>
+      <div class="label" style="margin-top:12px">معنى الإنجليزي بالعربي (للتأكد)</div>
+      <div id="outAr" class="size"></div>
     </div>
 
     <div class="card">
@@ -290,6 +293,9 @@
   let speakChain = Promise.resolve();   // الترجمات بتتنفذ بالترتيب
   let enAll = '';
   let lastEnChunk = '';
+  let backAll = '';        // معنى الإنجليزي بالعربي
+  let pendingAr = '';      // كلام متجمع مستنيين نكمله
+  let flushTimer = null;
 
   function setSpeakUI(on) {
     speakActive = on;
@@ -298,7 +304,7 @@
     if (!on) $('speakStatus').textContent = '';
   }
 
-  // بيترجم كل جزء بعد ما تسكت، من غير ما يستنى الجملة كلها
+  // بيترجم كل جملة بعد ما تكتمل
   function queueChunk(ar) {
     $('arLog').textContent = ($('arLog').textContent + ' ' + ar).trim();
     speakChain = speakChain.then(async () => {
@@ -309,11 +315,34 @@
         $('outEn').textContent = enAll;
         $('speakStatus').classList.remove('err');
         if ($('ttsOn').checked) speakEn(en, false);
+        // التحقق العكسي: الإنجليزي اترجم تاني للعربي عشان تتأكد من المعنى
+        translate(en, 'en', 'ar').then(b => {
+          backAll = (backAll + ' ' + b).trim();
+          $('outAr').textContent = backAll;
+        }).catch(() => {});
       } catch (e) {
         $('speakStatus').textContent = 'حصل خطأ في الترجمة، جرّب تاني';
         $('speakStatus').classList.add('err');
       }
     });
+  }
+
+  // تجميع الكلام: ما نترجمش كل جزء لوحده، نستنى الجملة تكتمل (سكتة ~1.5 ثانية أو علامة ترقيم)
+  function addPiece(ar) {
+    pendingAr = (pendingAr + ' ' + ar).trim();
+    clearTimeout(flushTimer);
+    if (/[.!?؟]$/.test(pendingAr) || pendingAr.length > 250) {
+      flushPending();
+    } else {
+      flushTimer = setTimeout(flushPending, 1500);
+    }
+  }
+
+  function flushPending() {
+    clearTimeout(flushTimer);
+    const text = pendingAr;
+    pendingAr = '';
+    if (text) queueChunk(text);
   }
 
   function startSpeakRec() {
@@ -338,7 +367,7 @@
       if (interim) $('speakStatus').textContent = interim.trim();
       if (final.trim()) {
         $('speakStatus').textContent = '';
-        queueChunk(final.trim());
+        addPiece(final.trim());
       }
     };
     r.onerror = (e) => {
@@ -361,6 +390,7 @@
     if (speakActive) {
       setSpeakUI(false);
       if (speakRec) speakRec.stop();
+      flushPending();
       return;
     }
     setSpeakUI(true);
@@ -378,6 +408,8 @@
     enAll = ''; lastEnChunk = '';
     $('outEn').textContent = '';
     $('arLog').textContent = '';
+    backAll = ''; pendingAr = ''; clearTimeout(flushTimer);
+    $('outAr').textContent = '';
   };
 
   $('playEn').onclick = () => speakEn(enAll, true);
