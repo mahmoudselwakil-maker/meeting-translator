@@ -1,0 +1,10 @@
+{
+  "name": "مترجم الاجتماعات",
+  "short_name": "مترجم",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f6f7f9",
+  "theme_color": "#1f6feb",
+  "lang": "ar",
+  "dir": "rtl"
+}

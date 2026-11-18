@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1f6feb">
+<link rel="manifest" href="manifest.webmanifest">
+<title>مترجم الاجتماعات</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#ffffff; --text:#111; --muted:#666; --accent:#1f6feb; --danger:#d93025; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg:#111; --card:#1c1c1e; --text:#eee; --muted:#999; }
+  }
+  :root[data-theme="dark"] { --bg:#111; --card:#1c1c1e; --text:#eee; --muted:#999; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  header { padding: 16px; font-weight: 700; font-size: 20px; text-align: center; }
+  nav { display:flex; gap:8px; padding: 0 16px; }
+  nav button { flex:1; padding:12px; border:0; border-radius:12px; background: var(--card); color: var(--text); font-size:15px; }
+  nav button.active { background: var(--accent); color:#fff; }
+  main { padding: 16px; }
+  .card { background: var(--card); border-radius:16px; padding:16px; margin-bottom:12px; }
+  .label { font-size:13px; color: var(--muted); margin-bottom:6px; }
+  .big { font-size:22px; line-height:1.5; min-height:34px; white-space: pre-wrap; word-wrap: break-word; }
+  .mic { width:100%; padding:20px; border:0; border-radius:16px; background: var(--accent); color:#fff; font-size:18px; font-weight:700; }
+  .mic.rec { background: var(--danger); }
+  .sm { padding:10px 14px; border:0; border-radius:10px; background: var(--accent); color:#fff; font-size:15px; }
+  .sm:disabled { opacity:.5; }
+  .sm.grey { background: var(--muted); }
+  textarea { width:100%; padding:12px; border-radius:12px; border:1px solid #bbb; font-size:17px; background: var(--card); color: var(--text); font-family: inherit; }
+  .row { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; align-items:center; }
+  .hidden { display:none; }
+  .status { font-size:14px; color: var(--muted); text-align:center; margin:10px 0; min-height:20px; }
+  .ltr { direction:ltr; text-align:left; }
+  .err { color: var(--danger); }
+  .size { font-size: 16px; line-height: 1.5; }
+</style>
+</head>
+<body>
+<header>مترجم الاجتماعات</header>
+
+<nav>
+  <button id="tabListen" class="active">بسمع: إنجليزي ← عربي</button>
+  <button id="tabSpeak">بتكلم: عربي ← إنجليزي</button>
+</nav>
+
+<main>
+  <!-- وضع الاستماع -->
+  <section id="listen">
+    <button id="listenBtn" class="mic">🎤 اضغط واتكلم (إنجليزي)</button>
+    <div class="status" id="listenStatus"></div>
+
+    <div class="card">
+      <div class="label">الإنجليزي</div>
+      <div class="big ltr" id="enText"></div>
+    </div>
+
+    <div class="card">
+      <div class="label">الترجمة بالعربي</div>
+      <div class="big" id="arText"></div>
+      <div class="row">
+        <button class="sm" id="speakAr">🔊 اسمع العربي</button>
+        <button class="sm grey" id="clearListen">مسح</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- وضع الكلام -->
+  <section id="speak" class="hidden">
+    <button id="speakBtn" class="mic">🎤 اضغط واتكلم (عربي)</button>
+    <div class="status" id="speakStatus"></div>
+
+    <div class="card">
+      <div class="label">اللي قلته بالعربي (تقدر تعدّله)</div>
+      <textarea id="arInput" rows="3" placeholder="اتكلم أو اكتب هنا"></textarea>
+      <div class="row">
+        <button class="sm" id="sendAr">ترجم وقول</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="label">الجملة الإنجليزي (بتتقال بصوت عالي)</div>
+      <div class="big ltr" id="outEn"></div>
+      <div class="row">
+        <button class="sm" id="playEn">🔊 قولها تاني</button>
+        <button class="sm grey" id="copyEn">نسخ</button>
+      </div>
+      <div class="label" style="margin-top:12px">معناها بالعربي</div>
+      <div id="outAr" class="size"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  // ===== التبويبات =====
+  function show(name) {
+    $('tabListen').classList.toggle('active', name === 'listen');
+    $('tabSpeak').classList.toggle('active', name === 'speak');
+    $('listen').classList.toggle('hidden', name !== 'listen');
+    $('speak').classList.toggle('hidden', name !== 'speak');
+  }
+  $('tabListen').onclick = () => show('listen');
+  $('tabSpeak').onclick = () => show('speak');
+
+  // ===== الكلام (Text to Speech) =====
+  function pickVoice(lang) {
+    const vs = speechSynthesis.getVoices();
+    const want = lang.toLowerCase();
+    return vs.find(v => v.lang.replace('_', '-').toLowerCase() === want)
+        || vs.find(v => v.lang.toLowerCase().startsWith(want.slice(0, 2)));
+  }
+
+  function speak(text, lang) {
+    if (!('speechSynthesis' in window) || !text) return;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = lang;
+    u.volume = 1;
+    u.rate = 0.95;
+    const v = pickVoice(lang);
+    if (v) u.voice = v;
+    speechSynthesis.speak(u);
+  }
+
+  // ===== التعرف على الصوت (Speech to Text) =====
+  function makeRec(lang, continuous, onInterim, onFinal, onEnd) {
+    if (!SR) {
+      alert('المتصفح ده مش بيدعم التعرف على الصوت. افتح الصفحة من Chrome على Android.');
+      return null;
+    }
+    const r = new SR();
+    r.lang = lang;
+    r.continuous = continuous;
+    r.interimResults = true;
+    r.maxAlternatives = 1;
+    r.onresult = (e) => {
+      let interim = '', final = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) final += t; else interim += t;
+      }
+      if (interim) onInterim(interim.trim());
+      if (final.trim()) onFinal(final.trim());
+    };
+    r.onerror = (e) => onEnd(e.error);
+    r.onend = () => onEnd(null);
+    return r;
+  }
+
+  // ===== الترجمة المجانية =====
+  // 1) Google (الأحسن)، 2) MyMemory كبديل لو Google وقع
+  async function translateGoogle(text, from, to) {
+    const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&dt=t'
+      + '&sl=' + from + '&tl=' + to + '&q=' + encodeURIComponent(text);
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('google ' + r.status);
+    const data = await r.json();
+    const out = (data[0] || []).map(seg => seg[0] || '').join('');
+    if (!out) throw new Error('google empty');
+    return out;
+  }
+
+  async function translateMyMemory(text, from, to) {
+    const url = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(text)
+      + '&langpair=' + from + '|' + to;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('mymemory ' + r.status);
+    const j = await r.json();
+    const out = j.responseData && j.responseData.translatedText;
+    if (!out || j.quotaFinished) throw new Error('mymemory unavailable');
+    return out;
+  }
+
+  async function translate(text, from, to) {
+    try {
+      return await translateGoogle(text, from, to);
+    } catch (e) {
+      return await translateMyMemory(text, from, to);
+    }
+  }
+
+  // ===== وضع الاستماع: إنجليزي ← عربي =====
+  let listenRec = null;
+  let enBuf = '';
+  let arBuf = '';
+  let listening = false;
+
+  function setListenUI(on) {
+    listening = on;
+    $('listenBtn').textContent = on ? '⏹ وقف' : '🎤 اضغط واتكلم (إنجليزي)';
+    $('listenBtn').classList.toggle('rec', on);
+    if (!on) $('listenStatus').textContent = '';
+  }
+
+  $('listenBtn').onclick = () => {
+    if (listening) { listenRec && listenRec.stop(); return; }
+    listenRec = makeRec('en-US', true,
+      (interim) => { $('listenStatus').textContent = interim; },
+      async (finalText) => {
+        enBuf = (enBuf + ' ' + finalText).trim();
+        $('enText').textContent = enBuf;
+        try {
+          const arabic = await translate(finalText, 'en', 'ar');
+          arBuf = (arBuf + ' ' + arabic).trim();
+          $('arText').textContent = arBuf;
+          $('listenStatus').textContent = '';
+          $('listenStatus').classList.remove('err');
+        } catch (e) {
+          $('listenStatus').textContent = 'حصل خطأ في الترجمة، جرّب تاني';
+          $('listenStatus').classList.add('err');
+        }
+      },
+      () => setListenUI(false)
+    );
+    if (!listenRec) return;
+    setListenUI(true);
+    listenRec.start();
+  };
+
+  $('speakAr').onclick = () => speak(arBuf, 'ar-EG');
+  $('clearListen').onclick = () => {
+    enBuf = ''; arBuf = '';
+    $('enText').textContent = ''; $('arText').textContent = '';
+  };
+
+  // ===== وضع الكلام: عربي ← إنجليزي =====
+  let speakRec = null;
+  let speaking = false;
+  let lastEn = '';
+
+  function setSpeakUI(on) {
+    speaking = on;
+    $('speakBtn').textContent = on ? '⏹ وقف' : '🎤 اضغط واتكلم (عربي)';
+    $('speakBtn').classList.toggle('rec', on);
+    if (!on) $('speakStatus').textContent = '';
+  }
+
+  async function doTranslate() {
+    const text = $('arInput').value.trim();
+    if (!text) return;
+    $('sendAr').disabled = true;
+    $('speakStatus').textContent = 'بترجم...';
+    $('speakStatus').classList.remove('err');
+    try {
+      lastEn = await translate(text, 'ar', 'en');
+      $('outEn').textContent = lastEn;
+      $('outAr').textContent = '';
+      speak(lastEn, 'en-US');   // يتقال بصوت عالي من السماعة
+      $('speakStatus').textContent = '';
+      // معنى الجملة بالعربي عشان تتأكد إنها اللي قصدته
+      try { $('outAr').textContent = await translate(lastEn, 'en', 'ar'); } catch (e) {}
+    } catch (e) {
+      $('speakStatus').textContent = 'حصل خطأ، جرّب تاني';
+      $('speakStatus').classList.add('err');
+    } finally {
+      $('sendAr').disabled = false;
+    }
+  }
+
+  $('speakBtn').onclick = () => {
+    if (speaking) { speakRec && speakRec.stop(); return; }
+    // جملة واحدة لكل ضغطة، والتعرف يقف لوحده لما تسكت
+    speakRec = makeRec('ar-EG', false,
+      (interim) => { $('speakStatus').textContent = interim; },
+      (finalText) => {
+        $('arInput').value = finalText;
+        setSpeakUI(false);
+        doTranslate();
+      },
+      (err) => {
+        setSpeakUI(false);
+        if (err && err !== 'aborted' && err !== 'no-speech') {
+          $('speakStatus').textContent = 'مشكلة في الميكروفون: ' + err;
+          $('speakStatus').classList.add('err');
+        }
+      }
+    );
+    if (!speakRec) return;
+    setSpeakUI(true);
+    speakRec.start();
+  };
+
+  $('sendAr').onclick = doTranslate;
+  $('playEn').onclick = () => speak(lastEn, 'en-US');
+  $('copyEn').onclick = async () => {
+    if (!lastEn) return;
+    try {
+      await navigator.clipboard.writeText(lastEn);
+      $('copyEn').textContent = 'اتنسخ ✓';
+      setTimeout(() => { $('copyEn').textContent = 'نسخ'; }, 1500);
+    } catch (e) {
+      $('speakStatus').textContent = 'النسخ مش شغال، انسخ يدوي';
+    }
+  };
+
+  // تسجيل Service Worker عشان يبقى التطبيق قابل للتثبيت
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+})();
+</script>
+</body>
+</html>
